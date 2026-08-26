@@ -79,6 +79,15 @@ jobs:
             // PRのDescription（本文）自体にプレビューリンクを埋め込む。
             // タイムラインの奥やチェック欄と違い、PRを開いた瞬間に必ず目に入る。
             // マーカーで囲むことで、再pushのたびに重複追記せず同じ箇所を上書きする。
+            //
+            // 注意: pulls.update はbodyを丸ごと上書きするAPIで、GitHub側に
+            // 楽観ロック（前回取得時から変化がなければ書き込む、等）は無い。
+            // そのため「人間がDescriptionを編集中に、このワークフローが
+            // 上書きしてしまう」競合は理論上ゼロにはできない。
+            // ただしプレビューURLはPR番号ごとに固定で、pushのたびに内容が
+            // 変わるわけではないため、「既に最新の内容が入っていれば
+            // 書き込み自体をスキップする」ことで、実質PRの最初の1回しか
+            // bodyに書き込まないようにし、競合が起きうる機会を最小化している。
             const previewUrl = "${{ steps.preview-status.outputs.preview_url }}";
             const startMarker = "<!-- docs-preview:start -->";
             const endMarker = "<!-- docs-preview:end -->";
@@ -90,20 +99,26 @@ jobs:
               pull_number: ${{ github.event.pull_request.number }},
             });
 
-            let body = pr.body || "";
-            if (body.includes(startMarker) && body.includes(endMarker)) {
-              const pattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`);
-              body = body.replace(pattern, block);
-            } else {
-              body = body.trim().length > 0 ? `${body}\n\n${block}` : block;
-            }
+            const body = pr.body || "";
 
-            await github.rest.pulls.update({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              pull_number: ${{ github.event.pull_request.number }},
-              body,
-            });
+            if (body.includes(block)) {
+              core.info("PR descriptionは既に最新のため更新をスキップしました。");
+            } else {
+              let newBody;
+              if (body.includes(startMarker) && body.includes(endMarker)) {
+                const pattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`);
+                newBody = body.replace(pattern, block);
+              } else {
+                newBody = body.trim().length > 0 ? `${body}\n\n${block}` : block;
+              }
+
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: ${{ github.event.pull_request.number }},
+                body: newBody,
+              });
+            }
 
       - name: Comment preview link on PR
         uses: peter-evans/create-or-update-comment@v4
