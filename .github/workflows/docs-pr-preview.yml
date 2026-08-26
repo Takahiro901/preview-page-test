@@ -1,0 +1,119 @@
+name: Docs PR Preview
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - "docs/**"
+      - "mkdocs.yml"
+      - "requirements-docs.txt"
+      - ".github/workflows/docs-pr-preview.yml"
+
+concurrency:
+  group: docs-pr-preview-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: "pip"
+
+      - name: Install MkDocs Material
+        run: pip install -r requirements-docs.txt
+
+      - name: Build site
+        run: mkdocs build --strict --site-dir site
+
+      - name: Deploy preview to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./site
+          destination_dir: pr-preview/pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          user_name: "github-actions[bot]"
+          user_email: "github-actions[bot]@users.noreply.github.com"
+
+      - name: Create Deployment and set status
+        id: deployment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const environment = `pr-${{ github.event.pull_request.number }}`;
+            const previewUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-preview/pr-${{ github.event.pull_request.number }}/`;
+
+            // 同一PR（同一environment）の過去のDeploymentが残り続けないよう、
+            // 新規作成前に既存分をすべて inactive にする。
+            const { data: existingDeployments } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment,
+            });
+
+            for (const dep of existingDeployments) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: dep.id,
+                state: "inactive",
+              });
+            }
+
+            // 今回のpushに対応する新しいDeploymentを作成。
+            // required_contexts: [] と auto_merge: false で、
+            // 他のステータスチェックの完了待ちやdefaultブランチとのマージでブロックされないようにする。
+            const { status, data: deployment } = await github.rest.repos.createDeployment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              ref: "${{ github.event.pull_request.head.sha }}",
+              environment,
+              auto_merge: false,
+              required_contexts: [],
+              transient_environment: true,
+              production_environment: false,
+              description: `Docs preview for PR #${{ github.event.pull_request.number }}`,
+            });
+
+            if (status !== 201) {
+              core.setFailed(`Deploymentの作成に失敗しました (status: ${status})`);
+              return;
+            }
+
+            await github.rest.repos.createDeploymentStatus({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              deployment_id: deployment.id,
+              state: "success",
+              environment_url: previewUrl,
+              description: "Docs preview deployed",
+            });
+
+            core.setOutput("preview_url", previewUrl);
+
+      - name: Comment preview link on PR
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-tag: docs-preview
+          edit-mode: replace
+          body: |
+            📖 ドキュメントプレビューを更新しました。
+
+            **プレビューURL:**
+            ${{ steps.deployment.outputs.preview_url }}
+
+            > PRのチェック欄・右サイドバーの「Environments」からも確認できます。

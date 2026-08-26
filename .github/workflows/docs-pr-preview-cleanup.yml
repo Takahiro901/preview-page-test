@@ -1,0 +1,60 @@
+name: Docs PR Preview Cleanup
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+  deployments: write
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages branch
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+
+      - name: Remove preview directory
+        run: |
+          PREVIEW_DIR="pr-preview/pr-${{ github.event.pull_request.number }}"
+          if [ -d "$PREVIEW_DIR" ]; then
+            git rm -r --ignore-unmatch "$PREVIEW_DIR"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git commit -m "docs: remove preview for PR #${{ github.event.pull_request.number }}"
+            git push
+          fi
+
+      - name: Mark Deployment inactive
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const environment = `pr-${{ github.event.pull_request.number }}`;
+
+            const { data: deployments } = await github.rest.repos.listDeployments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              environment,
+            });
+
+            for (const dep of deployments) {
+              await github.rest.repos.createDeploymentStatus({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                deployment_id: dep.id,
+                state: "inactive",
+              });
+            }
+
+      - name: Update PR comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-tag: docs-preview
+          edit-mode: replace
+          body: |
+            📖 このPRのドキュメントプレビューは削除されました（PRがクローズされたため）。

@@ -1,0 +1,23 @@
+site_name: プロジェクトドキュメント
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  language: ja
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - search.suggest
+    - content.code.copy
+
+use_directory_urls: false
+
+markdown_extensions:
+  - toc:
+      permalink: true
+  - admonition
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - tables
