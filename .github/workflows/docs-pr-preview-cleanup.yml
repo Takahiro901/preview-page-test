@@ -44,6 +44,32 @@ jobs:
               context: `docs-preview/pr-${{ github.event.pull_request.number }}`,
             });
 
+      - name: Remove preview link from PR description
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const startMarker = "<!-- docs-preview:start -->";
+            const endMarker = "<!-- docs-preview:end -->";
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ github.event.pull_request.number }},
+            });
+
+            let body = pr.body || "";
+            if (body.includes(startMarker) && body.includes(endMarker)) {
+              const pattern = new RegExp(`\\n*${startMarker}[\\s\\S]*?${endMarker}`);
+              body = body.replace(pattern, "").trimEnd();
+
+              await github.rest.pulls.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                pull_number: ${{ github.event.pull_request.number }},
+                body,
+              });
+            }
+
       - name: Update PR comment
         uses: peter-evans/create-or-update-comment@v4
         with:

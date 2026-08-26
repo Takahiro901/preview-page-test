@@ -72,6 +72,39 @@ jobs:
 
             core.setOutput("preview_url", previewUrl);
 
+      - name: Update PR description with preview link
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // PRのDescription（本文）自体にプレビューリンクを埋め込む。
+            // タイムラインの奥やチェック欄と違い、PRを開いた瞬間に必ず目に入る。
+            // マーカーで囲むことで、再pushのたびに重複追記せず同じ箇所を上書きする。
+            const previewUrl = "${{ steps.preview-status.outputs.preview_url }}";
+            const startMarker = "<!-- docs-preview:start -->";
+            const endMarker = "<!-- docs-preview:end -->";
+            const block = `${startMarker}\n> 📖 **ドキュメントプレビュー:** ${previewUrl}\n${endMarker}`;
+
+            const { data: pr } = await github.rest.pulls.get({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ github.event.pull_request.number }},
+            });
+
+            let body = pr.body || "";
+            if (body.includes(startMarker) && body.includes(endMarker)) {
+              const pattern = new RegExp(`${startMarker}[\\s\\S]*?${endMarker}`);
+              body = body.replace(pattern, block);
+            } else {
+              body = body.trim().length > 0 ? `${body}\n\n${block}` : block;
+            }
+
+            await github.rest.pulls.update({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              pull_number: ${{ github.event.pull_request.number }},
+              body,
+            });
+
       - name: Comment preview link on PR
         uses: peter-evans/create-or-update-comment@v4
         with:
