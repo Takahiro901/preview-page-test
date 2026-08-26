@@ -16,7 +16,7 @@ concurrency:
 permissions:
   contents: write
   pull-requests: write
-  deployments: write
+  statuses: write
 
 jobs:
   build-and-deploy:
@@ -49,58 +49,25 @@ jobs:
           user_name: "github-actions[bot]"
           user_email: "github-actions[bot]@users.noreply.github.com"
 
-      - name: Create Deployment and set status
-        id: deployment
+      - name: Set preview status check
+        id: preview-status
         uses: actions/github-script@v7
         with:
           script: |
-            const environment = `pr-${{ github.event.pull_request.number }}`;
             const previewUrl = `https://${{ github.repository_owner }}.github.io/${{ github.event.repository.name }}/pr-preview/pr-${{ github.event.pull_request.number }}/`;
 
-            // 同一PR（同一environment）の過去のDeploymentが残り続けないよう、
-            // 新規作成前に既存分をすべて inactive にする。
-            const { data: existingDeployments } = await github.rest.repos.listDeployments({
+            // Commit Status（Statuses API）を使う。
+            // 同一context（docs-preview/pr-<番号>）へのPOSTは常に最新のものだけが
+            // PRのチェック一覧（マージボックス/Checksタブ）に表示されるため、
+            // Deployments APIと違って古いものを掃除する処理が不要。
+            await github.rest.repos.createCommitStatus({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              environment,
-            });
-
-            for (const dep of existingDeployments) {
-              await github.rest.repos.createDeploymentStatus({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                deployment_id: dep.id,
-                state: "inactive",
-              });
-            }
-
-            // 今回のpushに対応する新しいDeploymentを作成。
-            // required_contexts: [] と auto_merge: false で、
-            // 他のステータスチェックの完了待ちやdefaultブランチとのマージでブロックされないようにする。
-            const { status, data: deployment } = await github.rest.repos.createDeployment({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              ref: "${{ github.event.pull_request.head.sha }}",
-              environment,
-              auto_merge: false,
-              required_contexts: [],
-              transient_environment: true,
-              production_environment: false,
-              description: `Docs preview for PR #${{ github.event.pull_request.number }}`,
-            });
-
-            if (status !== 201) {
-              core.setFailed(`Deploymentの作成に失敗しました (status: ${status})`);
-              return;
-            }
-
-            await github.rest.repos.createDeploymentStatus({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              deployment_id: deployment.id,
+              sha: "${{ github.event.pull_request.head.sha }}",
               state: "success",
-              environment_url: previewUrl,
-              description: "Docs preview deployed",
+              target_url: previewUrl,
+              description: "ドキュメントプレビューを表示",
+              context: `docs-preview/pr-${{ github.event.pull_request.number }}`,
             });
 
             core.setOutput("preview_url", previewUrl);
@@ -115,6 +82,6 @@ jobs:
             📖 ドキュメントプレビューを更新しました。
 
             **プレビューURL:**
-            ${{ steps.deployment.outputs.preview_url }}
+            ${{ steps.preview-status.outputs.preview_url }}
 
-            > PRのチェック欄・右サイドバーの「Environments」からも確認できます。
+            > PRのチェック欄（`docs-preview/pr-${{ github.event.pull_request.number }}`）からも確認できます。
